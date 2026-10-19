@@ -1,0 +1,356 @@
+---
+title: "Gene Expression Analysis in Breast Cancer"
+subtitle: "Syrine Mefteh"
+output: pdf_document
+date: "2026-09-29"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+For this project, we will be working with real RNA-seq count and meta data from breast cancer patients enrolled in The Cancer Genome Atlas (TCGA) Breast Invasive Carcinoma (TCGA-BRCA) cohort. This data encompasses diverse subtypes, tumor stages, and patient demographics. Some samples represent tumor tissues; others matched normal control samples from the same patient. TCGA is a landmark cancer genomics program jointly funded by the National Cancer Institute (NCI) and the National Human Genome Research Institute (NHGRI). TCGA generated comprehensive molecular profiles for over 11,000 patients across 33 cancer types, including bulk RNA-seq DNA methylation, copy number variation, somatic mutations, and clinical annotation. 
+
+The data includes the following meta data:
+•	Patient Demographics
+•	Tumor Characteristics
+•	Treatment Information
+•	Survival Data
+•	Sample Details
+
+## Analysis
+1)	**Data Preparation:**
+As shown by the results of the below code, we have 60,660 genes of interest, 1231 samples and 98 variables on patient demographics and cancer disease diagnosis and treatment details.   
+
+```{r}
+# call libraries
+library(here)
+library(tidyverse)
+library(ComplexHeatmap)
+library(gridExtra)
+
+# define filepath for counts and read the counts data file, 
+# check.names is False to avoid chaning the header column names (originally it changes the dashes to dots)
+pathfilecount <- here('data','counts.csv')
+countmatrix <- read.csv(file = pathfilecount, check.names = FALSE)
+
+# define filepath for metada and read the metadata data file
+pathfilemeta <- here('data','meta_data.csv')
+metadata <- read.csv(file = pathfilemeta)
+  
+# rename first column
+countmatrix <- countmatrix %>%
+  rename(GeneEnsemblID = 1)
+
+# how many genes and samples?
+dim(countmatrix) # 60660 genes and 1231 samples
+dim(metadata) # 1231 samples and 98 variables
+
+```
+
+2)	**Gene Selection and Summary Statistics:**
+*Gene Selection* 
+
+I chose **NFKB1 (ENSG00000109320.13)** as my gene of interest because of its important role in regulating inflammation and immune responses. NFKB1 acts like a “911 emergency dispatcher” for the immune system, helping coordinate the body's response to threats such as infections, cellular stress, and tissue damage by regulating the expression of numerous genes involved in inflammation and immunity. Since inflammation and immune-system activity play important roles in the development and progression of cancer, investigating NFKB1 gene expression may help reveal differences between breast tumor tissue and normal tissue, as well as potential associations between its expression and tumor characteristics or cancer stage. Therefore, analyzing NFKB1 using TCGA-BRCA RNA-seq data offers an opportunity to explore how this gene's expression varies across breast cancer samples and whether these differences are associated with relevant clinical characteristics.
+
+*Summary Statistics:* 
+
+```{r}
+# select the gene from the counts data frame then pivot the data so that each sample is in a row
+# basically samples with their expression values become observations 
+NFKB1_expression <- countmatrix %>%
+  filter(GeneEnsemblID == "ENSG00000109320.13") %>%
+  select(-GeneEnsemblID) %>%
+  pivot_longer(
+    cols = everything(),
+    names_to = "barcode",
+    values_to = "Expression"
+  )
+
+# check if there are any samples with 0 counts
+NFKB1_expression %>%
+  summarise(
+    zero_count_samples = sum(Expression == 0, na.rm = TRUE)
+  ) # no samples with 0 counts
+
+# compute the summary statistics using the summarise() function
+NFKB1_summary <- NFKB1_expression %>%
+  summarise(
+    mean = mean(Expression), #4435.95
+    median = median(Expression), #4000
+    sd = sd(Expression), #2284.392
+    min = min(Expression), #414
+    max = max(Expression) #19675
+  )
+NFKB1_summary 
+```
+
+The data have a mean of 4435.95 and median of 4000, with a relatively smaller standard deviation of 2284.392 Values range from 414 to 1,19675 The mean being above the median, together with the high maximum, suggests a right-skewed distribution with some unusually large values.
+
+3) **Visualization:**
+a)	*Histogram:*  
+
+```{r}
+# plot histogram using geom_histogram() with the minimal theme
+historig <- ggplot(data = NFKB1_expression, aes(x = Expression)) +
+        geom_histogram(bins = 30, fill = 'skyblue', color = "black", linewidth = 0.3) +
+        theme_minimal() +
+        labs(title = "Distribution of gene NFKB1 Expression Values", 
+             x = "RNA-Seq Count", 
+             y = "Number of Samples") + # add labels
+        theme(plot.title = element_text(size = 10), face = bold)
+
+histlog <- ggplot(data = NFKB1_expression, aes(x = Expression)) +
+        geom_histogram(bins = 30, fill = 'lightgreen', color = "black", linewidth = 0.3) +
+        scale_x_log10() +
+        theme_minimal() +
+        labs(title = "Distribution of gene NFKB1 Expression Values", 
+             x = "RNA-Seq Count (log10 Scale)", 
+             y = "Number of Samples") + # add labels +
+        theme(plot.title = element_text(size = 10), face = bold)
+
+
+grid.arrange(
+  historig,
+  histlog,
+  ncol = 2
+)
+```
+
+b) *Scatter Plot:* 
+
+I chose IDO1 (ENSG00000131203.13) as an additional gene of interest because of its important role in regulating immune responses and tryptophan metabolism. IDO1 acts like an “immune system dimmer switch,” helping tumors create an environment that suppresses immune activity and allows cancer cells to evade immune detection. It breaks down tryptophan into kynurenine, a metabolic pathway that has also been studied for its potential connections to neuroinflammation and mental health. Since immune regulation and inflammation play important roles in breast cancer progression, investigating IDO1 gene expression may help reveal differences between breast tumor tissue and normal tissue, as well as potential associations with tumor characteristics or cancer stage. Furthermore, examining IDO1 alongside NFKB1 may provide insight into the relationship between inflammatory signaling and immune regulation in breast cancer.
+
+```{r}
+# select the second gene from the counts data frame then pivot the data so that each sample is in a row
+IDO1_expression <- countmatrix %>%
+  filter(GeneEnsemblID == "ENSG00000131203.13") %>%
+  select(-GeneEnsemblID) %>%
+  pivot_longer(
+    cols = everything(),
+    names_to = "barcode",
+    values_to = "Expression"
+  )
+
+# join the two data frames based on sample ID
+NFKB1_and_IDO1 <- NFKB1_expression %>%
+  inner_join(
+    IDO1_expression,
+    by = "barcode",
+    suffix = c("_NFKB1", "_IDO1")
+  ) # awesome, we got 1231 samples
+
+# plot a scatter plot using geom_point() with minimal theme
+# and with linear regression line
+scatter_plot <- ggplot(data = NFKB1_and_IDO1, aes(x = Expression_NFKB1, 
+                                                  y = Expression_IDO1)) +
+        geom_point(color = "skyblue", alpha = 0.5) + # defines the scatter plot
+        geom_smooth(method = lm, color = "darkblue") + # adds a regression line
+        theme_minimal() + # adds a theme
+        labs(title = "Gene IDO1 vs Gene NFKB1 Expression Values", 
+             x = "Gene NFKB1 Count", 
+             y = "Gene IDO1 Count") + # add labels
+        theme(plot.title = element_text(size = 10), face = bold)
+
+# plot a scatter plot using geom_point() with minimal theme
+# and with linear regression line
+# with log scale
+scatter_plot_log <- ggplot(data = NFKB1_and_IDO1, aes(x = Expression_NFKB1, 
+                                                      y = Expression_IDO1)) +
+        geom_point(color = "lightgreen", alpha = 0.5) + # defines the scatter plot
+        geom_smooth(method = lm, color = "darkgreen") + # adds a regression line
+        scale_x_log10() +
+        scale_y_log10() +
+        theme_minimal() + # adds a theme
+        labs(title = "Gene IDO1 vs Gene NFKB1 Expression Values", 
+             x = "Gene NFKB1 Count (log10 scale)", 
+             y = "Gene IDO1 Count (log10 scale)") + # add labels
+        theme(plot.title = element_text(size = 10), face = bold)
+
+grid.arrange(
+  scatter_plot,
+  scatter_plot_log,
+  ncol = 2
+)
+```
+
+c)	*Violin Plot:*
+
+```{r}
+# join the NFKB1 expression with the metadata
+#NFKB1_expression <- NFKB1_expression %>%
+  #rename(barcode = Sample)
+
+NFKB1_and_metadata <- NFKB1_expression %>%
+  inner_join(metadata, by = "barcode")
+
+# create a violin plot using geom_violin() and jitter points
+violin_plot <- ggplot(data = NFKB1_and_metadata, aes(x = sample_type, 
+                                                     y = Expression, 
+                                                     fill = sample_type)) +
+  geom_violin(trim = FALSE, alpha = 0.7) +
+  geom_boxplot(width = 0.15, alpha = 0.8, outlier.shape = NA, show.legend = FALSE) +
+  theme_minimal() +
+  facet_wrap(~ tissue_type, nrow = 2) +
+  labs(
+    x = "Sample Type",
+    y = "Gene NFKB1 Counts",
+    title = "Distribution of gene NFKB1 Counts by Sample Type",
+    fill = "Sample Type") + # add labels
+  scale_fill_brewer(palette = "Set3") + # color palette
+  theme(
+    plot.title = element_text(size = 12, face = "bold"),
+    axis.title = element_text(size = 10),
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1,
+      size = 8),
+    axis.text.y = element_text(size = 9),
+    legend.position = "right")
+
+violin_plot
+
+```
+
+d)	*Heatmap Analysis:*
+
+I selected genes related to inflammation to investigate inflammatory pathways involved in breast cancer progression. Specifically, I focused on inflammatory cytokines and chemokines, which regulate inflammation and recruit immune cells, as well as genes involved in inflammatory signaling and regulation, which control the activation and modulation of immune responses. By examining the expression of these genes across sample types of breast cancer, I aim to better understand how changes in inflammatory activity are associated with cancer and the tumor immune microenvironment.
+
+
+```{r}
+gene_ensembl_ids <- c(
+  "ENSG00000109320.13",
+  "ENSG00000131203.13",
+  "ENSG00000136244.12",
+  "ENSG00000125538.12",
+  "ENSG00000232810.4",
+  "ENSG00000169429.11",
+  "ENSG00000150782.12",
+  "ENSG00000136634.7",
+  "ENSG00000077150.20",
+  "ENSG00000118503.15"
+)
+
+gene_names <- c(
+  "NFKB1",
+  "IDO1",
+  "IL6",
+  "IL1B",
+  "TNF",
+  "IL8",
+  "IL18",
+  "IL10",
+  "NFKB2",
+  "TNFAIP3"
+)
+
+add_gene_expression <- function(data, gene_ensembl_id, gene_name) {
+
+  # Extract expression values for the selected gene
+  gene_expression <- countmatrix %>%
+    filter(GeneEnsemblID == gene_ensembl_id) %>%
+    select(-GeneEnsemblID) %>%
+    pivot_longer(
+      cols = everything(),
+      names_to = "barcode",
+      values_to = gene_name
+    )
+
+  # Join expression values to the existing data frame by barcode
+  data <- data %>%
+    inner_join(gene_expression, by = "barcode")
+
+  return(data)
+}
+
+# Loop through the list of gene Ids and add one gene at a time to our data frame
+gene_expression_data <- metadata %>%
+  select(barcode)
+
+for (i in seq_along(gene_ensembl_ids)) {
+  gene_expression_data <- add_gene_expression(
+    data = gene_expression_data,
+    gene_ensembl_id = gene_ensembl_ids[i],
+    gene_name = gene_names[i]
+  )
+}
+
+#head(gene_expression_data)
+
+gene_expression_data_transposed <- gene_expression_data %>%
+  pivot_longer(
+    cols = -barcode,
+    names_to = "Gene",
+    values_to = "Expression"
+  ) %>%
+  pivot_wider(
+    names_from = barcode,
+    values_from = Expression
+  )
+
+# convert to a numeric matrix
+gene_expression_matrix <- gene_expression_data_transposed %>%
+  column_to_rownames(var = "Gene") %>%
+  as.matrix()
+
+# heatmap annotations
+column_ha <- HeatmapAnnotation(
+  Sample_Type = metadata$sample_type,
+  col = list(
+    Sample_Type = c("Primary Tumor" = "yellow", 
+                    "Solid Tissue Normal" = "purple", 
+                    "Metastatic" = "lightgreen")
+  )
+)
+
+# create heatmap
+Heatmap(
+  gene_expression_matrix,
+  name = "Counts",
+  top_annotation = column_ha,
+  show_row_names = TRUE,
+  show_column_names = FALSE, # column names were overlapping so I removed them
+  cluster_columns = TRUE,
+  cluster_rows = TRUE,
+  column_split = metadata$sample_type, # cluster by sample type
+  cluster_column_slices = TRUE,
+  column_title = "Samples",
+  row_title = "Genes",
+  heatmap_legend_param = list(title = "Count")
+)
+
+# CDF
+ggplot(data = NFKB1_and_metadata,
+       aes(x = Expression, fill = ajcc_pathologic_stage)) +
+  # create cdf function
+  geom_density(adjust = 1.5, alpha = 0.4) +
+  # facet wrap so that we have each stage separately
+  # scales = "free_x" to have each x-axis labeled individually for each stage
+  facet_wrap(~ ajcc_pathologic_stage, nrow = 3, scales = "free_x") +
+  scale_x_continuous(
+    # selects approximately 3 evenly spaced, readable x-axis tick marks
+    breaks = scales::breaks_pretty(n = 3),
+    # adds commas to large numbers for easier readability
+    labels = scales::label_comma()
+  ) +
+  theme_minimal() +
+  # resize x-axis labels and title
+  theme(
+    axis.text.x = element_text(size = 6),
+    axis.title = element_text(size = 10),
+    plot.title = element_text(size = 12),
+    legend.position = "none" # remove legend because it's self explanatory
+  ) +
+  # label x-axis, y-axis and title
+  labs(
+    x = "NFKB1 Expression (RNA-seq counts)",
+    y = "Density",
+    title = "NFKB1 Expression Distribution by Cancer Stage"
+  ) 
+```
+
+
+
+
